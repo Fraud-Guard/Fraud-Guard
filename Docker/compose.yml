@@ -84,16 +84,17 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
-    container_name: ml-worker
     command: python /app/src/worker.py
     volumes:
       - ../:/app
     depends_on:
       - kafka
-      - redis
       - mysql
     environment:
       PYTHONUNBUFFERED: 1
+    deploy:
+      mode: replicated
+      replicas: 3
 
   python-dev:
     build:

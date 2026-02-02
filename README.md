@@ -82,3 +82,9 @@ docker compose down
 # (옵션) 볼륨 데이터까지 삭제하고 싶을 경우
 docker compose down -v
 ```
+
+## MySQL 간편접속
+
+```bash
+docker exec -it mysql mysql -u root -p
+```
