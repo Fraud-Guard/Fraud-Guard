@@ -84,7 +84,7 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.python
     container_name: flask-producer
-    command: python /app/src/producer_raw.py --csv /app/data/transactions_data.csv --mode rate --rate 50
+    command: python /app/src/terminal.py --csv /app/data/transactions_data.csv --mode rate --rate 50
 
     volumes:
       - ../:/app
@@ -167,7 +167,7 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.spark
-    container_name: consumer-group-1
+    # container_name: consumer-group-1
     # Example command to submit spark job. User will replace with actual script path.
     # Using 'tail -f' placeholder if script doesn't exist yet, or actual command
     command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py

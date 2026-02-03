@@ -29,7 +29,7 @@ def start_simulation():
 
         for i, row in df.iterrows():
             # (시간 형식: 시:분은 현재, 초.밀리초는 인덱스 기반)
-            data = get_scaled_timestamp(row, i)
+            data = get_scaled_timestamp(row, i)   
             
             # 3. 도커 로그로 한 줄씩 출력 (줄줄이 찍히는 핵심 부분)
             # JSON 모양을 한 줄로 예쁘게 정렬해서 출력합니다. 고유id 부여, 초 변경,
