@@ -211,7 +211,11 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.spark
     container_name: consumer-group-2
-    command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer2.py
+    command: >
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8
+      /app/src/consumer2.py
     volumes:
       - ../:/app
     depends_on:
@@ -220,6 +224,8 @@ services:
       - mysql
     environment:
       SPARK_MASTER: spark://spark-master:7077
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
 
   # ---------------------------------------------------------------------------
   # Monitoring
