@@ -105,8 +105,8 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.python
     container_name: flask-producer
-    command: python /app/src/terminal.py # --csv /app/data/transactions_data.csv --mode rate --rate 50
-
+    # command: python /app/src/terminal.py # --csv /app/data/transactions_data.csv --mode rate --rate 50
+    command: python /app/src/terminal.py --csv /app/data/transactions_data.csv --mode rate --rate 10000
     volumes:
       - ../:/app
     depends_on:
@@ -196,13 +196,22 @@ services:
     # container_name: consumer-group-1
     # Example command to submit spark job. User will replace with actual script path.
     # Using 'tail -f' placeholder if script doesn't exist yet, or actual command
-    command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py
+    command: bash -c "sleep 20 && /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py"
+    # command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py
     volumes:
       - ../:/app
     depends_on:
-      - spark-master
-      - kafka
-      - mysql
+      mysql:
+        condition: service_healthy  # MySQL 헬스체크 통과 시까지 대기
+      kafka:
+        condition: service_started
+      spark-master:
+        condition: service_started
+      # 💡 연결 거부 등으로 꺼지면 성공할 때까지 계속 재시작
+    restart: on-failure  
+      # - spark-master
+      # - kafka
+      # - mysql
     environment:
       SPARK_MASTER: spark://spark-master:7077
 
@@ -220,9 +229,14 @@ services:
     volumes:
       - ../:/app
     depends_on:
-      - spark-master
-      - kafka
-      - mysql
+      mysql:
+          condition: service_healthy
+      kafka:
+        condition: service_started
+    restart: on-failure
+      # - spark-master
+      # - kafka
+      # - mysql
     environment:
       SPARK_MASTER: spark://spark-master:7077
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
