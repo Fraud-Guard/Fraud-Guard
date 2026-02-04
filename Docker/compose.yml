@@ -106,7 +106,7 @@ services:
       dockerfile: Docker/Dockerfile.python
     container_name: flask-producer
     # command: python /app/src/terminal.py # --csv /app/data/transactions_data.csv --mode rate --rate 50
-    command: python /app/src/terminal.py --csv /app/data/transactions_data.csv --mode rate --rate 2000
+    command: python /app/src/terminal.py --csv /app/data/transactions_data.csv --mode rate --rate 10000
     volumes:
       - ../:/app
     depends_on:
@@ -220,8 +220,8 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.spark
     container_name: consumer-group-2
-    command: bash -c "sleep 20 && /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer2.py"
-    # command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer2.py
+    # command: bash -c "sleep 20 && /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer2.py"
+    command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer2.py
     volumes:
       - ../:/app
     depends_on:
