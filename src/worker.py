@@ -19,6 +19,7 @@ if ENV_PATH.exists():
 else:
     print(f"[WARNING] .env file not found at: {ENV_PATH}")
 
+
 # ---------------------------------------------------------------------------
 # 1. Configuration & Connection Setup
 # ---------------------------------------------------------------------------
@@ -62,10 +63,25 @@ def get_db_connection():
         charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor
     )
 
+def check_mysql_actual_exists(user_id):
+    """레디스에 데이터가 없을 때, MySQL 원본 DB를 마지막으로 확인합니다."""
+    conn = get_db_connection() # 기존에 만드신 커넥션 함수 활용
+    try:
+        with conn.cursor() as cursor:
+            sql = "SELECT 1 FROM users_data WHERE id = %s"
+            cursor.execute(sql, (user_id,))
+            result = cursor.fetchone()
+            return result is not None  # 데이터가 있으면 True, 없으면 False
+    except Exception as e:
+        print(f"[ERROR] MySQL fallback check failed: {e}")
+        return False
+    finally:
+        conn.close()
+
 def load_data_to_redis():
     """
     [Warming] 시스템 시작 시 MySQL 데이터를 레디스로 1회 적재합니다.
-    PM님이 말씀하신 '레디스 캐시화' 단계입니다.
+    '레디스 캐시화' 단계입니다.
     """
     print("[INFO] Warming up Redis cache from MySQL...")
     start_warm = time.time()
@@ -104,12 +120,22 @@ def check_integrity_redis(data):
     Logic 1: 무결성 검증 (Redis-based)
     MySQL을 전혀 호출하지 않고 레디스 메모리에서만 검사합니다.
     """
-    start_time = time.time()
+    # start_time = time.time()
+    client_id = str(data['client_id'])
     try:
         # 1. Client ID 검증 (Set 조회)
-        if not r.sismember("check:users", str(data['client_id'])):
+        if not r.sismember("check:users", client_id):
             # print(f"[FAIL] Invalid Client ID: {data['client_id']}")
-            return False
+            # return False
+            print(f"🔍 [Miss] User {client_id} not in Redis. Checking MySQL...")
+            # 1-2. 레디스에 없다면? (실시간 추가' 상황일 수 있음)
+            # 여기서 MySQL을 딱 한 번만 조회해서 있으면 레디스에 넣고 True 반환
+            if check_mysql_actual_exists(client_id): 
+                r.sadd("check:users", client_id) # 레디스 실시간 업데이트!
+                print(f"✨ [Real-time Sync] User {client_id} added to Redis.")
+            else:
+                print(f"❌ [FAIL] User {client_id} not found in DB either.")
+                return False   
 
         # 2. Card ID 존재 및 소유주 일치 여부 (String 조회)
         cached_client_id = r.get(f"check:card:{data['card_id']}")
@@ -152,6 +178,7 @@ def main():
     
     try:
         while True:
+            
             msg = consumer.poll(1.0)
 
             if msg is None: continue
