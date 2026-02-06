@@ -5,7 +5,7 @@ import time
 import pymysql
 from dotenv import load_dotenv
 from pathlib import Path
-
+import redis
 # ---------------------------------------------------------------------------
 # 0) Load .env (Docker/.env)
 # ---------------------------------------------------------------------------
@@ -139,6 +139,14 @@ def clean_currency(value):
         return clean_val
     return value
 
+# ---------------------------------------------------------------------------
+# 5) Redis Connection (설정부 하단에 위치)
+# ---------------------------------------------------------------------------
+# decode_responses=True를 주어야 문자열로 다루기 편합니다.
+r = redis.StrictRedis(host='redis', port=6379, db=0, decode_responses=True)
+
+# ... (wait_for_db, get_connection 함수 등) ...
+
 def load_csv(table_name, file_name):
     """CSV 파일을 읽어 DB에 적재"""
     file_path = DATA_DIR / file_name
@@ -176,9 +184,20 @@ def load_csv(table_name, file_name):
                 for row in rows:
                     cleaned_row = [clean_currency(row[col]) for col in columns]
                     data_tuples.append(tuple(cleaned_row))
+                # -------------------------------------------------------
+                # [핵심] 레디스에 실시간 적재 (Memory-Write)
+                # -------------------------------------------------------
+                if table_name == "users_data":# "                                                                                                               실시간성"이 확보됩니다.
+                    r.sadd("check:users", str(row['id']))
+                elif table_name == "merchants_data":
+                    r.sadd("check:merchants", str(row['id']))
+                elif table_name == "cards_data":
+                    # 카드는 card_id -> client_id 매핑 저장
+                    r.set(f"check:card:{row['id']}", row['client_id'])
 
+                # MySQL 배치 인서트
                 for i in range(0, len(data_tuples), batch_size):
-                    batch = data_tuples[i : i + batch_size]
+                    batch = data_tuples[i : i + batch_size]                                     
                     cursor.executemany(sql, batch)
                     conn.commit()
                     print(f"   - Inserted {len(batch)} rows...")
