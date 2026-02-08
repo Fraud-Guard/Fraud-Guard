@@ -77,6 +77,8 @@ class FeatureStore:
         if not user_data:
             user_data_db = self._fetch_from_mysql("users_data", user_id)
             if user_data_db:
+                # [로그 추가] 캐시 미스 상황 알림
+                print(f"🔍 [Miss] User {user_id} not in Redis. Checking MySQL...")
                 # 필요한 컬럼만 JSON으로 저장
                 # yearly_income 전처리 ('$24,000' -> 24000.0)
                 income = str(user_data_db.get('yearly_income', '0')).replace('$','').replace(',','')
@@ -85,9 +87,12 @@ class FeatureStore:
                     'current_age': user_data_db.get('current_age', 0),
                     'credit_score': user_data_db.get('credit_score', 0)
                 }
+                # [로그 추가] 실시간 적재 성공 알림
+                print(f"✨ [Real-time Sync] User {user_id} features added to Redis.")
                 self.r.set(user_key, json.dumps(user_info))
                 features.update(user_info)
             else:
+                print(f"❌ [FAIL] User {user_id} not found in DB.")
                 return None # User 없음 (무결성 실패)
         else:
             features.update(json.loads(user_data))
@@ -96,6 +101,7 @@ class FeatureStore:
         card_key = f"info:card:{card_id}"
         card_data = self.r.get(card_key)
         if not card_data:
+            print(f"🔍 [Miss] Card {card_id} not in Redis. Checking MySQL...")
             card_data_db = self._fetch_from_mysql("cards_data", card_id)
             if card_data_db:
                 limit = str(card_data_db.get('credit_limit', '0')).replace('$','').replace(',','')
@@ -108,6 +114,7 @@ class FeatureStore:
                     'client_id': card_data_db.get('client_id') # 소유주 확인용
                 }
                 self.r.set(card_key, json.dumps(card_info))
+                print(f"✨ [Real-time Sync] Card {card_id} features added to Redis.")
                 features.update(card_info)
             else:
                 return None
@@ -270,6 +277,8 @@ def main():
                 continue
 
             try:
+                # [로그 추가] 시작 시간 기록
+                start_time = time.time()
                 raw = json.loads(msg.value().decode('utf-8'))
                 
                 # 1. Integrity & Static Feature Fetching
@@ -349,6 +358,11 @@ def main():
                 raw['is_severe_fraud'] = is_severe
                 
                 producer.produce(TARGET_TOPIC, json.dumps(raw).encode('utf-8'))
+
+                # [로그 추가] 종료 시간 기록 및 처리 시간 출력
+                duration = (time.time() - start_time) * 1000  # ms 단위 변환
+                print(f"✅ [Processed] Client: {raw['client_id']} | Latency: {duration:.4f}ms")
+                
                 producer.poll(0)
 
             except Exception as e:
