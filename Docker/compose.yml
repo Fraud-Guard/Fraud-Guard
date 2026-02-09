@@ -1,0 +1,301 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Core Infrastructure: Kafka, Zookeeper (None), Redis, MySQL
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:4.1.1
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk" # Random UUID for KRaft
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      - kafka
+  
+  # [NEW] Kafka Topic Initializer (일회용 컨테이너)
+  kafka-init:
+    image: apache/kafka:4.1.1
+    container_name: kafka-init
+    depends_on:
+      - kafka
+    command: |
+      bash -c "
+      echo 'Waiting for Kafka to be ready...' &&
+      sleep 10 &&
+      
+      echo 'Creating raw-topic (Partitions: 5)...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions 5 --replication-factor 1 &&
+      
+      echo 'Creating 2nd-topic (Partitions: 1)...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions 1 --replication-factor 1 &&
+      
+      echo 'Listing topics to verify:' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+      "
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - mysql_data:/var/lib/mysql
+      
+# [NEW] DB Initializer Service (init_db.py)
+  db-initializer:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.python
+    container_name: db-initializer
+    command: bash -lc "python /app/src/init_db.py && python /app/src/init_geo.py && python /app/src/init_views.py"
+    volumes:
+      - ../:/app        # 소스 코드 마운트
+      - ../data:/app/data # CSV 파일 마운트 (중요!)
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+
+  # ---------------------------------------------------------------------------
+  # Python Applications: Producer, redis_warmer, ML Worker, Dev Env
+  # ---------------------------------------------------------------------------
+  flask-producer:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.python
+    container_name: flask-producer
+    # command: python /app/src/terminal.py # --csv /app/data/transactions_data.csv --mode rate --rate 50
+    command: python /app/src/terminal.py --csv /app/data/transactions_data.csv --mode rate --rate 10000
+    volumes:
+      - ../:/app
+    depends_on:
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "5000:5000"
+    environment:
+      # FLASK_APP: src/producer_raw.py
+      # FLASK_ENV: development
+      # KAFKA_BOOTSTRAP: kafka:9092
+      # KAFKA_TOPIC: raw-topic
+      # RATE: "50"
+      # ACKS: "all"
+      # KEY_FIELD: "card_id"
+      # CHECKPOINT_PATH: "/app/checkpoint.txt"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  redis-warmer:
+    build: 
+      context: ..
+      dockerfile: Docker/Dockerfile.python
+    container_name: redis-warmer
+    command: python /app/src/redis_warmer.py
+    depends_on:
+      mysql:
+        condition: service_healthy
+      db-initializer:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    volumes:
+      - ../:/app
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      
+  ml-worker:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.python  
+    command: python /app/src/worker.py
+    volumes:
+      - ../:/app
+    depends_on:
+      - kafka
+      - mysql
+    environment:
+      PYTHONUNBUFFERED: 1
+    deploy:
+      mode: replicated
+      replicas: 5
+
+  python-dev:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.python
+    container_name: python-dev
+    # Keeps running as per Dockerfile CMD
+    volumes:
+      - ../:/app
+    ports:
+      - "8888:8888" # For potential Jupyter/dev use
+    environment:
+      PYTHONUNBUFFERED: 1
+  
+  spark-dev:
+    container_name: spark-dev
+    build:
+      context: ..                      # 프로젝트 루트 경로 (상황에 맞춰 조정)
+      dockerfile: Docker/Dockerfile.spark
+    # [핵심] 컨테이너가 시작되자마자 죽지 않고 무한 대기하게 만듭니다.
+    # apache/spark 이미지의 기본 진입점을 초기화([])하고, 아무것도 안 하는 명령을 실행합니다.
+    entrypoint: [] 
+    command: tail -f /dev/null
+    
+    # [볼륨] 로컬 코드를 컨테이너와 동기화
+    volumes:
+      - ../:/app
+    
+    # [환경변수] Spark가 Python을 찾을 수 있도록 설정
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=python3
+      # 필요하다면 아래 DB/Kafka 관련 변수도 추가
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      
+    # [포트] 혹시 이 컨테이너에서 띄우는 Spark UI(Driver)를 보고 싶다면 개방
+    ports:
+      - "4041:4040"
+
+  # ---------------------------------------------------------------------------
+  # Spark Cluster
+  # ---------------------------------------------------------------------------
+  spark-master:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.spark
+    container_name: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "8081:8080" # Spark Master Web UI
+      - "7077:7077"
+
+  spark-worker:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.spark
+    container_name: spark-worker
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8081" # Spark Worker Web UI
+    environment:
+      SPARK_MODE: worker
+      SPARK_WORKER_CORES: 1
+      SPARK_WORKER_MEMORY: 1g
+
+  # ---------------------------------------------------------------------------
+  # Spark Consumers
+  # ---------------------------------------------------------------------------
+  consumer-group-1:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.spark
+    # container_name: consumer-group-1
+    # Example command to submit spark job. User will replace with actual script path.
+    # Using 'tail -f' placeholder if script doesn't exist yet, or actual command
+    command: bash -c "sleep 20 && /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py"
+    # command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py
+    volumes:
+      - ../:/app
+    depends_on:
+      mysql:
+        condition: service_healthy  # MySQL 헬스체크 통과 시까지 대기
+      kafka:
+        condition: service_started
+      spark-master:
+        condition: service_started
+      # 💡 연결 거부 등으로 꺼지면 성공할 때까지 계속 재시작
+    restart: on-failure  
+      # - spark-master
+      # - kafka
+      # - mysql
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+
+  consumer-group-2:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.spark
+    container_name: consumer-group-2
+    command: >
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --conf spark.jars.ivy=/tmp/.ivy2
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8
+      /app/src/consumer2.py
+    volumes:
+      - ../:/app
+    depends_on:
+      mysql:
+          condition: service_healthy
+      kafka:
+        condition: service_started
+    restart: on-failure
+      # - spark-master
+      # - kafka
+      # - mysql
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+
+  # ---------------------------------------------------------------------------
+  # Monitoring
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+
+volumes:
+  kafka_data:
+  mysql_data:

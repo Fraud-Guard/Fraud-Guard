@@ -1,0 +1,15 @@
+Flask
+requests
+pytz
+kafka-python
+redis
+SQLAlchemy
+scikit-learn
+pandas
+numpy
+pyspark==3.5.0
+confluent-kafka
+pymysql
+cryptography
+python-dotenv
+catboost
