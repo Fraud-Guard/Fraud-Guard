@@ -9,10 +9,42 @@
 MYSQL_ROOT_PASSWORD=root
 MYSQL_DATABASE=fraud_detection
 
+## 기술 스택 (Tech Stack)
+
+### Infrastructure
+- **Docker** & **Docker Compose** - 컨테이너 오케스트레이션
+- **Kafka** (apache/kafka:4.1.1) - 메시지 브로커
+- **Redis** (latest) - 인메모리 캐시
+- **MySQL** (8.0) - 관계형 데이터베이스
+
+### Data Processing
+- **Apache Spark** (3.5.0) - 분산 스트리밍 처리
+- **Python** (3.10+) - 데이터 파이프라인 구현
+
+### Libraries
+- **kafka-python** - Kafka Producer/Consumer
+- **confluent-kafka** - Kafka 클라이언트
+- **pymysql** - MySQL 연결
+- **redis-py** - Redis 클라이언트
+- **pandas** - 데이터 처리
+- **Flask** - API 서버
+
+### Monitoring
+- **Kafka UI** - Kafka 모니터링
+- **Tableau** - MySQL 데이터 기반 대시보드 시각화
+
+---
 ## 1. 사전 요구 사항 (Prerequisites)
 
 *   **Docker Engine**: 최신 버전 설치 권장
 *   **Docker Compose**: Plugin 또는 Standalone 설치 필요
+
+## 1-2. 환경 설정
+```
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
 ## 2. 디렉토리 구조 설정
 
@@ -122,7 +154,7 @@ ls -l /app/src/
 | 서비스 | 접속 주소 | 설명 |
 | :--- | :--- | :--- |
 | **Kafka UI** | `http://localhost:8080` | Kafka 토픽 및 메시지 모니터링 |
-| **Grafana** | `http://localhost:3000` | 전체 시스템 모니터링 대시보드 |
+| **Tableau** | 별도 설치 | MySQL 연결 후 대시보드 구성 |
 | **Spark Master** | `http://localhost:8081` | Spark 클러스터 상태 확인 |
 | **MySQL** | `localhost:3306` | DB 접근 (User/PW: root/root - compose.yml 참조) |
 | **Redis** | `localhost:6379` | 캐시 서버 |
