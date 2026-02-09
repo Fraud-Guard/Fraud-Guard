@@ -14,6 +14,13 @@ MYSQL_DATABASE=fraud_detection
 *   **Docker Engine**: 최신 버전 설치 권장
 *   **Docker Compose**: Plugin 또는 Standalone 설치 필요
 
+## 1-2. 환경 설정
+```
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
 ## 2. 디렉토리 구조 설정
 
 프로젝트 루트 디렉토리(`2nd_project`)에 `requirements.txt`와 소스 코드 폴더(`src`)가 위치해야 합니다. Docker 설정은 `Docker/` 폴더 내에 있습니다.
