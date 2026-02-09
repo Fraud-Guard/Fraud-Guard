@@ -52,51 +52,49 @@ pip install -r requirements.txt
 
 ```bash
 2nd_project/
-├── data/
-│   ├── geo/
+├── data/                            # 데이터 저장소
+│   ├── geo/                         # 지리 데이터 (Tableau 시각화용)
 │   │   ├── cb_2023_us_state_20m.shx
 │   │   ├── cb_2023_us_state_20m.zip
 │   │   └── us_states.geojson
-│   ├── ML/
-│   │   ├── tier1model.cbm
-│   │   └── tier2model.cbm
+│   ├── ML/                          # 학습된 ML 모델
+│   │   ├── tier1model.cbm           # 1차 사기 탐지 모델
+│   │   └── tier2model.cbm           # 2차 사기 탐지 모델
 │   │
-│   └── origin/
-│       ├── cards_data.csv
-│       ├── merchants_data.csv
-│       ├── train_fraud_labels.json
-│       ├── transactions_data.csv
-│       └── users_data.csv
+│   └── origin/                      # 원본 데이터셋
+│       ├── cards_data.csv           # 카드 정보
+│       ├── merchants_data.csv       # 가맹점 정보
+│       ├── train_fraud_labels.json  # 사기 라벨 (학습용)
+│       ├── transactions_data.csv    # 거래 데이터
+│       └── users_data.csv           # 사용자 정보
 ├── Docker/
-│   ├── .env              <-- 환경 변수 설정
-│   ├── compose.yml
-│   ├── Dockerfile.python
-│   └── Dockerfile.spark
+│   ├── .env                         # Docker 설정 파일
+│   ├── compose.yml                  # Docker Compose 오케스트레이션
+│   ├── Dockerfile.python            # Python 컨테이너 이미지
+│   └── Dockerfile.spark             # Spark 컨테이너 이미지
 │
 ├── src/                  <-- 개발한 Python 소스 코드를 이곳에 위치
-│   ├── ML/
-│   │   ├── ML.ipynb
-│   │   └── ML.py
+│   ├── ML/                          # 머신러닝 모듈
+│   │   └── ML.ipynb                 # 모델 학습 노트북
 │   └── utils/
-│       ├── __pycache__/
-│       │   └── formatter.cpython-312.pyc
-│       ├── formatter.py
-│       ├── __init__.py
-│       ├── consumer1.py
-│       ├── consumer2.py
-│       ├── init_db.py
-│       ├── init_geo.py
-│       ├── init_views.py
-│       ├── redis_warmer.py
-│       ├── terminal.py
-│       ├── test_flow.py
-│       └── worker.py
+│   │   └── formatter.py             # 데이터 포맷 변환
+│   │
+│   ├──  __init__.py                 # Python 패키지 초기화
+│   ├── consumer1.py                 # Spark Consumer (transactions_data 적재)
+│   ├── consumer2.py                 # Spark Consumer (윈도우 집계)
+│   ├── init_db.py                   # MySQL 초기 데이터 로딩
+│   ├── init_geo.py                  # 지리 데이터
+│   ├── init_views.py                # MySQL 뷰 생성
+│   ├── redis_warmer.py              # Redis 캐시 사전 로딩
+│   ├── terminal.py                  # Flask Producer (Kafka 전송)
+│   ├── test_flow.py                 # 프로듀서 테스트
+│   └── worker.py                    # 무결성 검증 + ML Worker
 │
-├── venv/
-├── .gitignore
-├── checkpoint.txt
-├── README.md
-└── requirements.txt   <-- Python 의존성 목록 (모든 컨테이너 공통)
+├── venv/                            # Python 가상환경 (Git 제외)
+├── .gitignore                       # Git 제외 파일 목록
+├── checkpoint.txt                   # Producer 체크포인트 (재시작용)
+├── README.md                        # 프로젝트 문서
+└── requirements.txt                 # Python 의존성 목록 (모든 컨테이너 공통)
     
 ```
 
