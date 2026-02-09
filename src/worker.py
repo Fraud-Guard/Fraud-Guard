@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import random
 import datetime
 import numpy as np
 import pandas as pd
@@ -300,9 +299,6 @@ def main():
                 start_time = time.time()
                 raw = json.loads(msg.value().decode('utf-8'))
 
-                is_fraud = int(random.random() < 0.00518729324)
-                is_severe = int(random.random() < 0.000428350176)
-
                 # 현재 시간 계산 (요청 들어온 시간)
                 seoul_tz = pytz.timezone('Asia/Seoul')
                 now_seoul = datetime.now(seoul_tz)
@@ -375,7 +371,7 @@ def main():
                 }
                 
                 # 3. Inference
-                # is_severe, is_fraud = model_handler.predict(features)
+                is_severe, is_fraud = model_handler.predict(features)
                 raw['order_time'] = order_time
                 raw['is_valid'] = 0
                 raw['is_fraud'] = is_fraud
