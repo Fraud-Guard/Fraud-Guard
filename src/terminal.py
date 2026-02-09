@@ -67,7 +67,7 @@ def start_simulation():
             # Kafka로 전송 추가
             if producer:
                 try:
-                    producer.send('raw-topic', key=data['card_id'], value=data)
+                    producer.send('raw-topic', key=data['client_id'], value=data)
                 except KafkaError as e:
                     logger.error(f"Kafka 전송 실패: {e}")
             
