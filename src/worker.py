@@ -40,6 +40,24 @@ MODEL_PATH_TIER2 = '/app/data/ML/tier2model.cbm'
 TH_TIER1 = 0.99816559
 TH_TIER2 = 0.56802705
 
+def mask_value(value, visible_len=2):
+    """
+    민감 정보를 마스킹합니다.
+    예: 1234567 -> ******67
+    """
+    if value is None:
+        return "None"
+    
+    s_val = str(value)
+    length = len(s_val)
+    
+    # 길이가 1글자면 별도처리
+    if length == 1:
+        return "******0" + s_val
+    
+    # 뒤쪽 visible_len 만큼만 보여줌
+    return "******" + s_val[-visible_len:]
+
 # ---------------------------------------------------------------------------
 # 1. Feature Store (Redis + MySQL Handler)
 # ---------------------------------------------------------------------------
@@ -84,7 +102,7 @@ class FeatureStore:
             user_data_db = self._fetch_from_mysql("users_data", user_id)
             if user_data_db:
                 # [로그 추가] 캐시 미스 상황 알림
-                print(f"🔍 [Miss] User {user_id} not in Redis. Checking MySQL...")
+                print(f"🔍 [Miss] User {mask_value(user_id)} not in Redis. Checking MySQL...")
                 
                 # [수정] clean_dollar 적용 및 int 명시
                 income = self.clean_dollar(user_data_db.get('yearly_income'))
@@ -95,11 +113,11 @@ class FeatureStore:
                 }
                 
                 # [로그 추가] 실시간 적재 성공 알림
-                print(f"✨ [Real-time Sync] User {user_id} features added to Redis.")
+                print(f"✨ [Real-time Sync] User {mask_value(user_id)} features added to Redis.")
                 self.r.set(user_key, json.dumps(user_info))
                 features.update(user_info)
             else:
-                print(f"❌ [FAIL] User {user_id} not found in DB.")
+                print(f"❌ [FAIL] User {mask_value(user_id)} not found in DB.")
                 return None
         else:
             features.update(json.loads(user_data))
@@ -109,7 +127,7 @@ class FeatureStore:
         card_data = self.r.get(card_key)
         
         if not card_data:
-            print(f"🔍 [Miss] Card {card_id} not in Redis. Checking MySQL...")
+            print(f"🔍 [Miss] Card {mask_value(card_id)} not in Redis. Checking MySQL...")
             card_data_db = self._fetch_from_mysql("cards_data", card_id)
             if card_data_db:
                 # [수정] clean_dollar 적용 및 int 명시
@@ -122,9 +140,10 @@ class FeatureStore:
                     'card_brand': card_data_db.get('card_brand', 'Unknown')
                 }
                 self.r.set(card_key, json.dumps(card_info))
-                print(f"✨ [Real-time Sync] Card {card_id} features added to Redis.")
+                print(f"✨ [Real-time Sync] Card {mask_value(card_id)} features added to Redis.")
                 features.update(card_info)
             else:
+                print(f"❌ [FAIL] Card {mask_value(card_id)} not found in DB.")
                 return None
         else:
             features.update(json.loads(card_data))
@@ -145,7 +164,6 @@ class FeatureStore:
                 return None
         else:
             m_data = json.loads(merch_data)
-        print(m_data)
 
         # [Dirty Fix 수정 -> Training Format 일치화]
         # MCC: Training is "5300" (Stringified Int) -> DB 5300.0/5300 -> "5300"
@@ -275,14 +293,6 @@ class ModelHandler:
             # 3. 실수형 (Float)
             else:
                 row.append(float(val) if val is not None else 0.0)
-        
-        # [로그] 모델 입력값 확인
-        print("\n" + "="*50)
-        print(f"🕵️ [Live Debug] Worker Input Vector (Client ID: {feature_dict.get('client_id', 'Unknown')})")
-        print("="*50)
-        debug_view = dict(zip(self.feature_order, row))
-        print(json.dumps(debug_view, indent=4, default=str))
-        print("="*50 + "\n")
 
         prob_t1 = self.tier1.predict_proba(row)[1]
         is_severe = 1 if prob_t1 >= TH_TIER1 else 0
@@ -408,7 +418,7 @@ def main():
                 producer.produce(TARGET_TOPIC, json.dumps(raw).encode('utf-8'))
                 
                 duration = (time.time() - start_time) * 1000
-                print(f"✅ [Processed] Client: {raw['client_id']} | Fraud: {is_fraud} | Latency: {duration:.4f}ms")
+                print(f"✅ [Processed] Client: {mask_value(raw['client_id'])} | Fraud: {is_fraud} | Latency: {duration:.4f}ms")
                 producer.poll(0)
 
             except Exception as e:
