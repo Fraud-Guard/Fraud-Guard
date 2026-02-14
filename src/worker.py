@@ -21,24 +21,26 @@ ENV_PATH = BASE_DIR.parent / 'Docker' / '.env'
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
-KAFKA_BROKER = 'kafka:9092'
-SOURCE_TOPIC = 'raw-topic'
-TARGET_TOPIC = '2nd-topic'
-CONSUMER_GROUP = 'fraud-core-group'
+KAFKA_BROKER = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+SOURCE_TOPIC = os.getenv("KAFKA_TOPIC_RAW", "raw-topic")
+TARGET_TOPIC = os.getenv("KAFKA_TOPIC_PROCESSED", "2nd-topic")
+CONSUMER_GROUP = os.getenv("KAFKA_CONSUMER_GROUP_ID", "fraud-core-group")
 
-DB_HOST = 'mysql'
-DB_USER = 'root'
-DB_PASSWORD = os.environ.get('MYSQL_ROOT_PASSWORD', 'root')
-DB_NAME = os.environ.get('MYSQL_DATABASE', 'fraud_detection')
+DB_HOST = os.getenv("MYSQL_HOST", "mysql")
+DB_USER = os.getenv("MYSQL_APP_USER", "root")
+DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
-REDIS_HOST = 'redis'
-REDIS_PORT = 6379
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 
-MODEL_PATH_TIER1 = '/app/data/ML/tier1model.cbm'
-MODEL_PATH_TIER2 = '/app/data/ML/tier2model.cbm'
+MODEL_PATH_TIER1 = os.getenv("MODEL_PATH_TIER1", "/app/data/ML/tier1model.cbm")
+MODEL_PATH_TIER2 = os.getenv("MODEL_PATH_TIER2", "/app/data/ML/tier2model.cbm")
 
-TH_TIER1 = 0.99816559
-TH_TIER2 = 0.56802705
+# float 변환 주의!
+TH_TIER1 = float(os.getenv("MODEL_THRESHOLD_TIER1", 0.99816559))
+TH_TIER2 = float(os.getenv("MODEL_THRESHOLD_TIER2", 0.56802705))
 
 def mask_value(value, visible_len=2):
     """
@@ -63,7 +65,7 @@ def mask_value(value, visible_len=2):
 # ---------------------------------------------------------------------------
 class FeatureStore:
     def __init__(self):
-        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True)
         self.db_conn = None
 
     def get_db_connection(self):
