@@ -5,18 +5,18 @@ import pymysql
 from pathlib import Path
 from dotenv import load_dotenv
 
-# .env 로드 (너 프로젝트 구조 기준)
+# .env 로드
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR.parent / "Docker" / ".env"
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
 DB_HOST = os.getenv("MYSQL_HOST", "mysql")
-DB_USER = os.getenv("MYSQL_USER", "root")
-DB_PASSWORD = os.environ.get("MYSQL_ROOT_PASSWORD", "root")
-DB_NAME = os.environ.get("MYSQL_DATABASE", "fraud_guard")
+DB_USER = os.getenv("MYSQL_APP_USER", "root")
+DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
-GEOJSON_PATH = Path("/app/data/geo/us_states.geojson")  # 너가 만든 파일 경로
+GEOJSON_PATH = Path("/app/data/geo/us_states.geojson")
 
 def wait_for_db():
     retries = 30

@@ -5,16 +5,22 @@ import json
 import pymysql
 import math
 import time
+from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from pathlib import Path
 
-# 환경 변수 설정 (docker-compose와 연동)
+# 환경 변수
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR.parent / "Docker" / ".env"
+if ENV_PATH.exists():
+    load_dotenv(dotenv_path=ENV_PATH)
+
 KAFKA_BOOTSTRAP = os.getenv('KAFKA_BOOTSTRAP', 'kafka:9092')
-KAFKA_TOPIC = '2nd-topic'
-MYSQL_HOST = 'mysql'
-MYSQL_USER = 'root'
-MYSQL_PASSWORD = os.getenv('MYSQL_ROOT_PASSWORD', 'root')
-MYSQL_DB = 'fraud_guard'
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC_PROCESSED", "2nd-topic")
+MYSQL_HOST = os.getenv("MYSQL_HOST", "mysql")
+MYSQL_USER = os.getenv("MYSQL_APP_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+MYSQL_DB = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
 def get_db_connection():
     max_retries = 10

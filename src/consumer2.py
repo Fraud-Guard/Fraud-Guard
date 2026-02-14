@@ -24,12 +24,12 @@ from pyspark.sql.functions import (
 # ----------------------------
 # 0) 환경 변수/상수
 # ----------------------------
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
-SOURCE_TOPIC = os.getenv("KAFKA_TOPIC", "2nd-topic")
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+SOURCE_TOPIC = os.getenv("KAFKA_TOPIC_PROCESSED", "2nd-topic")
 
 MYSQL_HOST = os.getenv("MYSQL_HOST", "mysql")
-MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "root")
+MYSQL_USER = os.getenv("MYSQL_APP_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
 MYSQL_DB = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
 # 윈도우 종류(요구사항: 1분/1시간/24시간)

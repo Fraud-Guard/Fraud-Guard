@@ -15,11 +15,15 @@ ENV_PATH = BASE_DIR.parent / "Docker" / ".env"
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
-DB_HOST = "mysql"
-DB_USER = "root"
-DB_PASSWORD = os.environ.get("MYSQL_ROOT_PASSWORD", "root")
-DB_NAME = os.environ.get("MYSQL_DATABASE", "fraud_guard")
+DB_HOST = os.getenv("MYSQL_HOST", "mysql")
+DB_USER = os.getenv("MYSQL_APP_USER", "root")
+DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 DATA_DIR = Path("/app/data/origin")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
 # ---------------------------------------------------------------------------
 # 1) Wait for DB
@@ -120,6 +124,23 @@ def create_database_and_tables():
                 )
             """)
 
+            # [추가] App User 생성 및 권한 부여 로직 (이 부분을 추가하세요!)
+            print(f"[SECURITY] Creating App User: {APP_USER}...")
+            
+            # (1) 유저 생성 (없을 경우에만)
+            # '%'는 '모든 호스트(컨테이너)'에서의 접속을 허용한다는 뜻입니다.
+            cursor.execute(f"CREATE USER IF NOT EXISTS '{APP_USER}'@'%' IDENTIFIED BY '{APP_PASSWORD}';")
+            
+            # (2) 권한 부여
+            # Root 권한(GRANT OPTION 등)은 주지 않고, 
+            # fraud_guard DB에 대해서만 CRUD(Select, Insert, Update, Delete) 권한 부여
+            cursor.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {DB_NAME}.* TO '{APP_USER}'@'%';")
+            
+            # (3) 권한 적용
+            cursor.execute("FLUSH PRIVILEGES;")
+            
+            print(f"[SECURITY] ✅ App User '{APP_USER}' created and privileges granted.")
+
         conn.commit()
         print("[INIT] Master schema creation checked/completed.")
     finally:
@@ -143,7 +164,7 @@ def clean_currency(value):
 # 5) Redis Connection (설정부 하단에 위치)
 # ---------------------------------------------------------------------------
 # decode_responses=True를 주어야 문자열로 다루기 편합니다.
-r = redis.StrictRedis(host='redis', port=6379, db=0, decode_responses=True)
+r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, password=REDIS_PASSWORD, decode_responses=True)
 
 # ... (wait_for_db, get_connection 함수 등) ...
 

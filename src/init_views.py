@@ -13,8 +13,8 @@ if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
 DB_HOST = os.getenv("MYSQL_HOST", "mysql")
-DB_USER = os.getenv("MYSQL_USER", "root")
-DB_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "root")
+DB_USER = os.getenv("MYSQL_APP_USER", "root")
+DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
 DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
 
