@@ -37,6 +37,24 @@ def get_db_connection():
 
     raise Exception("❌ DB 연결 시도 횟수 초과!")
 
+def mask_value(value, visible_len=2):
+    """
+    민감 정보를 마스킹합니다.
+    예: 1234567 -> ******67
+    """
+    if value is None:
+        return "None"
+    
+    s_val = str(value)
+    length = len(s_val)
+    
+    # 길이가 1글자면 별도처리
+    if length == 1:
+        return "******0" + s_val
+    
+    # 뒤쪽 visible_len 만큼만 보여줌
+    return "******" + s_val[-visible_len:]
+
 def main():
     # 1. 카프카 컨슈머 설정
     consumer = KafkaConsumer(
@@ -47,7 +65,7 @@ def main():
         value_deserializer=lambda x: json.loads(x.decode('utf-8'))# JSON 역직렬화 설정
     )
 
-    print(f"📥 {KAFKA_TOPIC} 모니터링 시작 및 DB 적재 대기 중...")
+    print(f"📥 kafka 모니터링 시작 및 DB 적재 대기 중...")
 
     while True:  # 👈 추가: 프로그램이 종료되지 않게 무한 루프
         conn = None
@@ -107,7 +125,7 @@ def main():
                 cursor.execute(sql, val)
                 conn.commit()
                 
-                print(f"✅ [DB 저장 완료] ID: {data['id']} | Time: {data['order_time']}")
+                print(f"✅ [DB 저장 완료] ID: {mask_value(data['id'])} | Time: {data['order_time']}")
 
         except Exception as e:
             print(f"❌ 에러 발생: {e}")
