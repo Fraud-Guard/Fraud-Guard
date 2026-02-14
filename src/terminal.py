@@ -2,7 +2,7 @@ from flask import Flask, jsonify
 import pandas as pd
 import time
 import logging
-import json
+import json, os
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 from utils.formatter import get_scaled_timestamp
@@ -10,6 +10,8 @@ from datetime import datetime
 import pytz
 
 app = Flask(__name__)
+
+KAFKA_BROKER = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
 
 # 도커 데스크탑 로그(표준 출력) 설정
 logging.basicConfig(
@@ -25,7 +27,7 @@ def init_kafka_producer():
     global producer
     try:
         producer = KafkaProducer(
-            bootstrap_servers='kafka:9092',
+            bootstrap_servers=KAFKA_BROKER,
             value_serializer=lambda v: json.dumps(v).encode('utf-8'),
             key_serializer=lambda k: str(k).encode('utf-8') if k else None,
             acks='all'
