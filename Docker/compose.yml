@@ -73,6 +73,8 @@ services:
     container_name: mysql
     networks:
       - backend-network
+    ports:
+      - "127.0.0.1:3306:3306" # MySQL workbench 로컬 접속용 포트
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
