@@ -79,26 +79,7 @@ def main():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            # 1. Transactions Table (최종 적재용)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS transactions_data (
-                    id INT PRIMARY KEY,
-                    order_id INT,
-                    order_time DATETIME(3),
-                    client_id INT,
-                    card_id INT,
-                    merchant_id INT,
-                    amount DECIMAL(10, 2),
-                    error VARCHAR(100),
-                    is_valid BOOLEAN,
-                    is_fraud BOOLEAN,
-                    is_severe_fraud BOOLEAN,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (client_id) REFERENCES users_data(id),
-                    FOREIGN KEY (card_id) REFERENCES cards_data(id),
-                    FOREIGN KEY (merchant_id) REFERENCES merchants_data(id)
-                )
-            """)
+            
             # 2. 메시지 소비 및 적재 루프
             for message in consumer:
                 data = message.value
