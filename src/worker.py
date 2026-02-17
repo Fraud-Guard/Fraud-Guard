@@ -65,7 +65,10 @@ def mask_value(value, visible_len=2):
 # ---------------------------------------------------------------------------
 class FeatureStore:
     def __init__(self):
-        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True)
+        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True,
+                                   socket_connect_timeout=5, # 연결 시도 5초 제한
+                                   socket_timeout=5          # 데이터 읽기/쓰기 5초 제한
+        )
         self.db_conn = None
 
     def get_db_connection(self):
@@ -73,7 +76,10 @@ class FeatureStore:
             self.db_conn = pymysql.connect(
                 host=DB_HOST, user=DB_USER, password=DB_PASSWORD, db=DB_NAME,
                 charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True
+                autocommit=True,
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
         return self.db_conn
 

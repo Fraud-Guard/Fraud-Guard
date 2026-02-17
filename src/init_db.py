@@ -41,6 +41,9 @@ def wait_for_db():
                 user="root",
                 password=ROOT_PASSWORD,
                 charset="utf8mb4",
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
             conn.close()
             print("✅ MySQL is ready to accept connections!")
@@ -63,6 +66,9 @@ def get_connection(with_db: bool = False):
         db=DB_NAME if with_db else None,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=10,
+        read_timeout=30,
+        write_timeout=30
     )
 
 # ---------------------------------------------------------------------------
