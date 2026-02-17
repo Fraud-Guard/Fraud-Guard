@@ -1,3 +1,5 @@
+name: fraud-guard
+
 services:
   # ---------------------------------------------------------------------------
   # Core Infrastructure: Kafka, Zookeeper (None), Redis, MySQL
@@ -46,16 +48,32 @@ services:
       - backend-network
     depends_on:
       - kafka
+    # [1] .env의 값을 컨테이너 내부 환경변수로 주입
+    environment:
+      KAFKA_PARTITIONS_RAW: ${KAFKA_PARTITIONS_RAW:-5}
+      KAFKA_PARTITIONS_ERR: ${KAFKA_PARTITIONS_RAW:-3}
+      KAFKA_PARTITIONS_PROCESSED: ${KAFKA_PARTITIONS_PROCESSED:-3}
     command: |
       bash -c "
-      echo 'Waiting for Kafka to be ready...' &&
-      sleep 10 &&
+      echo 'Waiting for Kafka to be ready...'
       
-      echo 'Creating raw-topic (Partitions: 5)...' &&
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions 5 --replication-factor 1 &&
+      # [Smart Wait] Kafka가 응답할 때까지 대기
+      while ! /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1; do
+        echo 'Kafka is not ready yet... retrying in 2s'
+        sleep 2
+      done
       
-      echo 'Creating 2nd-topic (Partitions: 1)...' &&
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions 1 --replication-factor 1 &&
+      echo '✅ Kafka is Ready! Creating topics...'
+
+      # [2] 주입된 환경변수 사용
+      echo 'Creating raw-topic (Partitions: ${KAFKA_PARTITIONS_RAW})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions ${KAFKA_PARTITIONS_RAW} --replication-factor 1 &&
+      
+      echo 'Creating raw-topic (Partitions: ${KAFKA_PARTITIONS_ERR})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic err-topic --partitions ${KAFKA_PARTITIONS_ERR} --replication-factor 1 &&
+      
+      echo 'Creating 2nd-topic (Partitions: ${KAFKA_PARTITIONS_PROCESSED})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions ${KAFKA_PARTITIONS_PROCESSED} --replication-factor 1 &&
       
       echo 'Listing topics to verify:' &&
       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
@@ -73,6 +91,8 @@ services:
     container_name: mysql
     networks:
       - backend-network
+    ports:
+      - "127.0.0.1:3306:3306" # MySQL workbench 로컬 접속용 포트
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -85,11 +105,12 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       
-  # DB Initializer Service (init_db.py)
+  # DB Initializer Service (init_db.py, init_geo.py, init_views.py)
   db-initializer:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
+      target: medium_image
     container_name: db-initializer
     networks:
       - backend-network
@@ -111,6 +132,7 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
+      target: heavy_image
     container_name: flask-producer
     networks:
       - backend-network
@@ -134,6 +156,7 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python  
+      target: ml_image
     command: python /app/src/worker.py
     networks:
       - backend-network
@@ -147,21 +170,6 @@ services:
     deploy:
       mode: replicated
       replicas: 5
-
-  python-dev:
-    build:
-      context: ..
-      dockerfile: Docker/Dockerfile.python
-    container_name: python-dev
-    networks:
-      - backend-network
-    # Keeps running as per Dockerfile CMD
-    volumes:
-      - ../:/app
-    ports:
-      - "8888:8888" # 개발용 Jupyter 등 접근 필요 시
-    environment:
-      PYTHONUNBUFFERED: 1
 
   # ---------------------------------------------------------------------------
   # Spark Cluster
@@ -253,17 +261,6 @@ services:
       SPARK_MASTER: spark://spark-master:7077
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
-
-  # ---------------------------------------------------------------------------
-  # Monitoring
-  # ---------------------------------------------------------------------------
-  grafana:
-    image: grafana/grafana
-    container_name: grafana
-    networks:
-      - backend-network
-    ports:
-      - "3000:3000" # 대시보드 접근용
 
 networks:
   backend-network:

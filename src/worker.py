@@ -23,6 +23,7 @@ if ENV_PATH.exists():
 
 KAFKA_BROKER = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 SOURCE_TOPIC = os.getenv("KAFKA_TOPIC_RAW", "raw-topic")
+ERROR_TOPIC = os.getenv("KAFKA_TOPIC_ERROR", "err-topic")
 TARGET_TOPIC = os.getenv("KAFKA_TOPIC_PROCESSED", "2nd-topic")
 CONSUMER_GROUP = os.getenv("KAFKA_CONSUMER_GROUP_ID", "fraud-core-group")
 
@@ -65,7 +66,10 @@ def mask_value(value, visible_len=2):
 # ---------------------------------------------------------------------------
 class FeatureStore:
     def __init__(self):
-        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True)
+        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True,
+                                   socket_connect_timeout=5, # 연결 시도 5초 제한
+                                   socket_timeout=5          # 데이터 읽기/쓰기 5초 제한
+        )
         self.db_conn = None
 
     def get_db_connection(self):
@@ -73,7 +77,10 @@ class FeatureStore:
             self.db_conn = pymysql.connect(
                 host=DB_HOST, user=DB_USER, password=DB_PASSWORD, db=DB_NAME,
                 charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True
+                autocommit=True,
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
         return self.db_conn
 
@@ -427,6 +434,31 @@ def main():
                 print(f"[ERROR] Processing Failed: {e}")
                 import traceback
                 traceback.print_exc()
+
+                # 에러 발생 시 err-topic으로 에러 메시지 수집
+                try:
+                    # 원본 메시지가 decoding이 안될 수도 있으므로 안전하게 처리
+                    raw_val = msg.value()
+                    decoded_val = "Unknown (Decode Failed)"
+                    if raw_val:
+                        try:
+                            decoded_val = raw_val.decode('utf-8')
+                        except:
+                            decoded_val = str(raw_val)
+
+                    error_data = {
+                        "error_message": str(e),
+                        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "original_data": decoded_val
+                    }
+                    
+                    # 에러 토픽으로 전송
+                    producer.produce(ERROR_TOPIC, json.dumps(error_data).encode('utf-8'))
+                    producer.poll(0)
+                    print(f"⚠️ [DLQ] Failed message sent to {ERROR_TOPIC}")
+                    
+                except Exception as dlq_error:
+                    print(f"🔥 [CRITICAL] Failed to send to DLQ: {dlq_error}")
 
     except KeyboardInterrupt:
         print("Worker stopping...")

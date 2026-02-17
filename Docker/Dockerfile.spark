@@ -4,13 +4,22 @@ USER root
 
 WORKDIR /app
 
-# Install pip and python dependencies
-# Note: apache/spark usually runs on a minimal linux. Clean up apt caches.
-RUN apt-get update && apt-get install -y python3-pip && \
-    rm -rf /var/lib/apt/lists/*
+# 1. 시스템 의존성 업데이트 및 pip 설치
+# (apache/spark 이미지는 최소한의 패키지만 있으므로 필요 시 설치)
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-# Install requirements for all users
-RUN pip3 install --no-cache-dir -r requirements.txt
+# 2. Requirements 설치
+COPY Docker/requirements-base.txt /tmp/requirements-base.txt
+COPY Docker/requirements-medium.txt /tmp/requirements-medium.txt
+COPY Docker/requirements-heavy.txt /tmp/requirements-heavy.txt
+
+# 3. 의존성 설치
+# --no-deps 옵션 등을 고려할 수도 있지만, 안전하게 다 설치합니다.
+RUN pip3 install --no-cache-dir \
+    -r /tmp/requirements-base.txt \
+    -r /tmp/requirements-medium.txt \
+    -r /tmp/requirements-heavy.txt
 
 USER spark

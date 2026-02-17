@@ -60,7 +60,10 @@ def get_mysql_conn():
         db=MYSQL_DB,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True
+        autocommit=True,
+        connect_timeout=10,  # 연결 시도 10초 지나면 에러
+        read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+        write_timeout=30     # (선택) 데이터 전송 30초 제한
     )
 
 

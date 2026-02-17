@@ -32,7 +32,10 @@ def get_db_connection():
                 password=MYSQL_PASSWORD,
                 db=MYSQL_DB,
                 charset='utf8mb4',
-                cursorclass=pymysql.cursors.DictCursor
+                cursorclass=pymysql.cursors.DictCursor,
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
             print("✅ DB 연결 성공!")
             return conn
@@ -79,26 +82,7 @@ def main():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            # 1. Transactions Table (최종 적재용)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS transactions_data (
-                    id INT PRIMARY KEY,
-                    order_id INT,
-                    order_time DATETIME(3),
-                    client_id INT,
-                    card_id INT,
-                    merchant_id INT,
-                    amount DECIMAL(10, 2),
-                    error VARCHAR(100),
-                    is_valid BOOLEAN,
-                    is_fraud BOOLEAN,
-                    is_severe_fraud BOOLEAN,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (client_id) REFERENCES users_data(id),
-                    FOREIGN KEY (card_id) REFERENCES cards_data(id),
-                    FOREIGN KEY (merchant_id) REFERENCES merchants_data(id)
-                )
-            """)
+            
             # 2. 메시지 소비 및 적재 루프
             for message in consumer:
                 data = message.value

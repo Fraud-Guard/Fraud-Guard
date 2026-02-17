@@ -13,8 +13,7 @@ if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
 DB_HOST = os.getenv("MYSQL_HOST", "mysql")
-DB_USER = os.getenv("MYSQL_APP_USER", "root")
-DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+ROOT_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD")
 DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
 
@@ -27,9 +26,12 @@ def wait_for_db(retries: int = 30, sleep_sec: int = 2) -> None:
         try:
             conn = pymysql.connect(
                 host=DB_HOST,
-                user=DB_USER,
-                password=DB_PASSWORD,
+                user="root",
+                password=ROOT_PASSWORD,
                 charset="utf8mb4",
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
             conn.close()
             print("✅ MySQL is ready!")
@@ -44,12 +46,15 @@ def wait_for_db(retries: int = 30, sleep_sec: int = 2) -> None:
 def get_conn():
     return pymysql.connect(
         host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        user="root",
+        password=ROOT_PASSWORD,
         db=DB_NAME,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=True,
+        connect_timeout=10,
+        read_timeout=30,
+        write_timeout=30
     )
 
 
