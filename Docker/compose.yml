@@ -1,3 +1,5 @@
+name: fraud-guard
+
 services:
   # ---------------------------------------------------------------------------
   # Core Infrastructure: Kafka, Zookeeper (None), Redis, MySQL
@@ -63,7 +65,7 @@ services:
       
       echo '✅ Kafka is Ready! Creating topics...'
 
-      # [2] 주입된 환경변수 사용 (${VAR_NAME})
+      # [2] 주입된 환경변수 사용
       echo 'Creating raw-topic (Partitions: ${KAFKA_PARTITIONS_RAW})...' &&
       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions ${KAFKA_PARTITIONS_RAW} --replication-factor 1 &&
       
@@ -103,11 +105,12 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       
-  # DB Initializer Service (init_db.py)
+  # DB Initializer Service (init_db.py, init_geo.py, init_views.py)
   db-initializer:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
+      target: medium_image
     container_name: db-initializer
     networks:
       - backend-network
@@ -129,6 +132,7 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
+      target: heavy_image
     container_name: flask-producer
     networks:
       - backend-network
@@ -152,6 +156,7 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python  
+      target: ml_image
     command: python /app/src/worker.py
     networks:
       - backend-network
@@ -165,21 +170,6 @@ services:
     deploy:
       mode: replicated
       replicas: 5
-
-  python-dev:
-    build:
-      context: ..
-      dockerfile: Docker/Dockerfile.python
-    container_name: python-dev
-    networks:
-      - backend-network
-    # Keeps running as per Dockerfile CMD
-    volumes:
-      - ../:/app
-    ports:
-      - "8888:8888" # 개발용 Jupyter 등 접근 필요 시
-    environment:
-      PYTHONUNBUFFERED: 1
 
   # ---------------------------------------------------------------------------
   # Spark Cluster
@@ -271,17 +261,6 @@ services:
       SPARK_MASTER: spark://spark-master:7077
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
-
-  # ---------------------------------------------------------------------------
-  # Monitoring
-  # ---------------------------------------------------------------------------
-  grafana:
-    image: grafana/grafana
-    container_name: grafana
-    networks:
-      - backend-network
-    ports:
-      - "3000:3000" # 대시보드 접근용
 
 networks:
   backend-network:

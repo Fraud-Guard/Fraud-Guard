@@ -1,18 +1,57 @@
-FROM python:3.12-slim
+# ==========================================
+# 0. System Base (공통 OS 설정)
+# ==========================================
+FROM python:3.12-slim AS system_base
 
 WORKDIR /app
 
-# Install system dependencies if needed (e.g. for some pip packages)
+# 시스템 의존성 설치 (모든 단계 공통)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     default-libmysqlclient-dev \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# ==========================================
+# 1. Light Stage (기본 유틸)
+# ==========================================
+FROM system_base AS light_image
+COPY Docker/requirements-base.txt /tmp/requirements-base.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-base.txt
+
+# ==========================================
+# 2. Medium Stage (인프라/웹/DB)
+# ==========================================
+FROM light_image AS medium_image
+COPY Docker/requirements-medium.txt /tmp/requirements-medium.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-medium.txt
+
+# ==========================================
+# 3. Heavy Stage (데이터/Spark + Java)
+# ==========================================
+FROM medium_image AS heavy_image
+
+# Java 21 설치 (최신 OS 기본 패키지 사용)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-21-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+
+COPY Docker/requirements-heavy.txt /tmp/requirements-heavy.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-heavy.txt
+
+# ==========================================
+# 4. ML Stage (머신러닝 모델링)
+# ==========================================
+FROM heavy_image AS ml_image
+
+COPY Docker/requirements-ML.txt /tmp/requirements-ML.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-ML.txt
+
+# ==========================================
+# Final Setup (실행 시점 설정)
+# ==========================================
+# (참고: 소스 코드는 docker-compose volume으로 마운트하므로 COPY 생략 가능하지만,
+#  프로덕션 빌드를 위해 넣어두는 것이 정석입니다.)
 COPY src/ /app/src/
-COPY data/ /app/data/
-
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Default command to keep container running
-CMD ["tail", "-f", "/dev/null"]

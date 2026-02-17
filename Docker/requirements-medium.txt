@@ -1,0 +1,8 @@
+# Base는 Dockerfile에서 이미 설치됨
+Flask
+requests
+kafka-python
+confluent-kafka
+redis
+pymysql
+SQLAlchemy
