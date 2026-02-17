@@ -46,16 +46,28 @@ services:
       - backend-network
     depends_on:
       - kafka
+    # [1] .env의 값을 컨테이너 내부 환경변수로 주입
+    environment:
+      KAFKA_PARTITIONS_RAW: ${KAFKA_PARTITIONS_RAW:-5}       # 기본값 5
+      KAFKA_PARTITIONS_PROCESSED: ${KAFKA_PARTITIONS_PROCESSED:-3} # 기본값 1
     command: |
       bash -c "
-      echo 'Waiting for Kafka to be ready...' &&
-      sleep 10 &&
+      echo 'Waiting for Kafka to be ready...'
       
-      echo 'Creating raw-topic (Partitions: 5)...' &&
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions 5 --replication-factor 1 &&
+      # [Smart Wait] Kafka가 응답할 때까지 대기
+      while ! /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1; do
+        echo 'Kafka is not ready yet... retrying in 2s'
+        sleep 2
+      done
       
-      echo 'Creating 2nd-topic (Partitions: 1)...' &&
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions 1 --replication-factor 1 &&
+      echo '✅ Kafka is Ready! Creating topics...'
+
+      # [2] 주입된 환경변수 사용 (${VAR_NAME})
+      echo 'Creating raw-topic (Partitions: ${KAFKA_PARTITIONS_RAW})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions ${KAFKA_PARTITIONS_RAW} --replication-factor 1 &&
+      
+      echo 'Creating 2nd-topic (Partitions: ${KAFKA_PARTITIONS_PROCESSED})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions ${KAFKA_PARTITIONS_PROCESSED} --replication-factor 1 &&
       
       echo 'Listing topics to verify:' &&
       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
