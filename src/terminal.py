@@ -2,14 +2,34 @@ from flask import Flask, jsonify
 import pandas as pd
 import time
 import logging
-import json
+import json, os
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 from utils.formatter import get_scaled_timestamp
 from datetime import datetime
 import pytz
 
+def mask_value(value, visible_len=2):
+    """
+    민감 정보를 마스킹합니다.
+    예: 1234567 -> ******67
+    """
+    if value is None:
+        return "None"
+    
+    s_val = str(value)
+    length = len(s_val)
+    
+    # 길이가 1글자면 별도처리
+    if length == 1:
+        return "******0" + s_val
+    
+    # 뒤쪽 visible_len 만큼만 보여줌
+    return "******" + s_val[-visible_len:]
+
 app = Flask(__name__)
+
+KAFKA_BROKER = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
 
 # 도커 데스크탑 로그(표준 출력) 설정
 logging.basicConfig(
@@ -25,7 +45,7 @@ def init_kafka_producer():
     global producer
     try:
         producer = KafkaProducer(
-            bootstrap_servers='kafka:9092',
+            bootstrap_servers=KAFKA_BROKER,
             value_serializer=lambda v: json.dumps(v).encode('utf-8'),
             key_serializer=lambda k: str(k).encode('utf-8') if k else None,
             acks='all'
@@ -52,7 +72,7 @@ def start_simulation():
         df['errors'] = df['errors'].fillna('-')
         
         logger.info("==================================================")
-        logger.info(f"🚀 데이터 가공 시뮬레이션 시작 (총 {len(df)}건)")
+        logger.info(f"🚀 단말기(시뮬레이션) 전송 시작 (총 {len(df)}건)")
         logger.info("==================================================")
 
         for i, row in df.iterrows():
@@ -73,7 +93,7 @@ def start_simulation():
             
             # 3. 도커 로그로 한 줄씩 출력 (줄줄이 찍히는 핵심 부분)
             # JSON 모양을 한 줄로 예쁘게 정렬해서 출력합니다. 고유id 부여, 초 변경,
-            log_msg = f"📤 [IDX:{i:04d}] | {data['id']} | {order_time} | ClientId:{data['client_id']} | CardId:{data['card_id']}| MerchantId:{data['merchant_id']}｜Amt:{data['amount']}｜Chip:{data['use_chip']}｜ERR:{data['error']}"
+            log_msg = f"📤 [ID:{mask_value(data['id'])} | {order_time} | ClientId:{mask_value(data['client_id'])} | CardId:{mask_value(data['card_id'])}| MerchantId:{mask_value(data['merchant_id'])}｜Amt:{data['amount']}｜Chip:{data['use_chip']}｜ERR:{data['error']}"
             logger.info(log_msg)
             
             # 4. 실시간 느낌을 위한 딜레이 (0.1초)

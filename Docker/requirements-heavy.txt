@@ -1,0 +1,4 @@
+# Medium까지는 이미 설치됨
+numpy
+pandas
+pyspark

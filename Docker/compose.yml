@@ -1,3 +1,5 @@
+name: fraud-guard
+
 services:
   # ---------------------------------------------------------------------------
   # Core Infrastructure: Kafka, Zookeeper (None), Redis, MySQL
@@ -6,8 +8,8 @@ services:
     image: apache/kafka:4.1.1
     hostname: kafka
     container_name: kafka
-    ports:
-      - "9092:9092"
+    networks:
+      - backend-network
     environment:
       # KRaft settings
       KAFKA_NODE_ID: 1
@@ -29,29 +31,49 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     ports:
-      - "8080:8080"
+      - "8080:8080" # kafka UI 모니터링용
+    networks:
+      - backend-network
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     depends_on:
       - kafka
   
-  # [NEW] Kafka Topic Initializer (일회용 컨테이너)
+  # Kafka Topic Initializer (일회용 컨테이너)
   kafka-init:
     image: apache/kafka:4.1.1
     container_name: kafka-init
+    networks:
+      - backend-network
     depends_on:
       - kafka
+    # [1] .env의 값을 컨테이너 내부 환경변수로 주입
+    environment:
+      KAFKA_PARTITIONS_RAW: ${KAFKA_PARTITIONS_RAW:-5}
+      KAFKA_PARTITIONS_ERR: ${KAFKA_PARTITIONS_RAW:-3}
+      KAFKA_PARTITIONS_PROCESSED: ${KAFKA_PARTITIONS_PROCESSED:-3}
     command: |
       bash -c "
-      echo 'Waiting for Kafka to be ready...' &&
-      sleep 10 &&
+      echo 'Waiting for Kafka to be ready...'
       
-      echo 'Creating raw-topic (Partitions: 5)...' &&
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions 5 --replication-factor 1 &&
+      # [Smart Wait] Kafka가 응답할 때까지 대기
+      while ! /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1; do
+        echo 'Kafka is not ready yet... retrying in 2s'
+        sleep 2
+      done
       
-      echo 'Creating 2nd-topic (Partitions: 1)...' &&
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions 1 --replication-factor 1 &&
+      echo '✅ Kafka is Ready! Creating topics...'
+
+      # [2] 주입된 환경변수 사용
+      echo 'Creating raw-topic (Partitions: ${KAFKA_PARTITIONS_RAW})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-topic --partitions ${KAFKA_PARTITIONS_RAW} --replication-factor 1 &&
+      
+      echo 'Creating raw-topic (Partitions: ${KAFKA_PARTITIONS_ERR})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic err-topic --partitions ${KAFKA_PARTITIONS_ERR} --replication-factor 1 &&
+      
+      echo 'Creating 2nd-topic (Partitions: ${KAFKA_PARTITIONS_PROCESSED})...' &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic 2nd-topic --partitions ${KAFKA_PARTITIONS_PROCESSED} --replication-factor 1 &&
       
       echo 'Listing topics to verify:' &&
       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
@@ -60,14 +82,17 @@ services:
   redis:
     image: redis:latest
     container_name: redis
-    ports:
-      - "6379:6379"
+    networks:
+      - backend-network
+    command: redis-server --requirepass ${REDIS_PASSWORD}
 
   mysql:
     image: mysql:8.0
     container_name: mysql
+    networks:
+      - backend-network
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306" # MySQL workbench 로컬 접속용 포트
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -80,12 +105,15 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       
-# [NEW] DB Initializer Service (init_db.py)
+  # DB Initializer Service (init_db.py, init_geo.py, init_views.py)
   db-initializer:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
+      target: medium_image
     container_name: db-initializer
+    networks:
+      - backend-network
     command: bash -lc "python /app/src/init_db.py && python /app/src/init_geo.py && python /app/src/init_views.py"
     volumes:
       - ../:/app        # 소스 코드 마운트
@@ -104,7 +132,10 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python
+      target: heavy_image
     container_name: flask-producer
+    networks:
+      - backend-network
     # command: python /app/src/terminal.py # --csv /app/data/transactions_data.csv --mode rate --rate 50
     command: python /app/src/terminal.py --csv /app/data/transactions_data.csv --mode rate --rate 10000
     volumes:
@@ -117,42 +148,18 @@ services:
       kafka-init:
         condition: service_completed_successfully
     ports:
-      - "5000:5000"
+      - "5000:5000" # 외부 트래픽 주입용 포트
     environment:
-      # FLASK_APP: src/producer_raw.py
-      # FLASK_ENV: development
-      # KAFKA_BOOTSTRAP: kafka:9092
-      # KAFKA_TOPIC: raw-topic
-      # RATE: "50"
-      # ACKS: "all"
-      # KEY_FIELD: "card_id"
-      # CHECKPOINT_PATH: "/app/checkpoint.txt"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-
-  redis-warmer:
-    build: 
-      context: ..
-      dockerfile: Docker/Dockerfile.python
-    container_name: redis-warmer
-    command: python /app/src/redis_warmer.py
-    depends_on:
-      mysql:
-        condition: service_healthy
-      db-initializer:
-        condition: service_completed_successfully
-      redis:
-        condition: service_started
-    volumes:
-      - ../:/app
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
       
   ml-worker:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.python  
+      target: ml_image
     command: python /app/src/worker.py
+    networks:
+      - backend-network
     volumes:
       - ../:/app
     depends_on:
@@ -164,45 +171,6 @@ services:
       mode: replicated
       replicas: 5
 
-  python-dev:
-    build:
-      context: ..
-      dockerfile: Docker/Dockerfile.python
-    container_name: python-dev
-    # Keeps running as per Dockerfile CMD
-    volumes:
-      - ../:/app
-    ports:
-      - "8888:8888" # For potential Jupyter/dev use
-    environment:
-      PYTHONUNBUFFERED: 1
-  
-  spark-dev:
-    container_name: spark-dev
-    build:
-      context: ..                      # 프로젝트 루트 경로 (상황에 맞춰 조정)
-      dockerfile: Docker/Dockerfile.spark
-    # [핵심] 컨테이너가 시작되자마자 죽지 않고 무한 대기하게 만듭니다.
-    # apache/spark 이미지의 기본 진입점을 초기화([])하고, 아무것도 안 하는 명령을 실행합니다.
-    entrypoint: [] 
-    command: tail -f /dev/null
-    
-    # [볼륨] 로컬 코드를 컨테이너와 동기화
-    volumes:
-      - ../:/app
-    
-    # [환경변수] Spark가 Python을 찾을 수 있도록 설정
-    environment:
-      - SPARK_MASTER=spark://spark-master:7077
-      - PYSPARK_PYTHON=python3
-      - PYSPARK_DRIVER_PYTHON=python3
-      # 필요하다면 아래 DB/Kafka 관련 변수도 추가
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-      
-    # [포트] 혹시 이 컨테이너에서 띄우는 Spark UI(Driver)를 보고 싶다면 개방
-    ports:
-      - "4041:4040"
-
   # ---------------------------------------------------------------------------
   # Spark Cluster
   # ---------------------------------------------------------------------------
@@ -211,21 +179,24 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.spark
     container_name: spark-master
+    networks:
+      - backend-network
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
-      - "8081:8080" # Spark Master Web UI
-      - "7077:7077"
+      - "8081:8080" # Spark Master Web UI (모니터링용)
 
   spark-worker:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.spark
     container_name: spark-worker
+    networks:
+      - backend-network
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
     ports:
-      - "8082:8081" # Spark Worker Web UI
+      - "8082:8081" # Spark Worker Web UI (모니터링용)
     environment:
       SPARK_MODE: worker
       SPARK_WORKER_CORES: 1
@@ -239,6 +210,8 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.spark
     # container_name: consumer-group-1
+    networks:
+      - backend-network
     # Example command to submit spark job. User will replace with actual script path.
     # Using 'tail -f' placeholder if script doesn't exist yet, or actual command
     command: bash -c "sleep 20 && /opt/spark/bin/spark-submit --master spark://spark-master:7077 /app/src/consumer1.py"
@@ -265,6 +238,8 @@ services:
       context: ..
       dockerfile: Docker/Dockerfile.spark
     container_name: consumer-group-2
+    networks:
+      - backend-network
     command: >
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
@@ -287,14 +262,9 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
 
-  # ---------------------------------------------------------------------------
-  # Monitoring
-  # ---------------------------------------------------------------------------
-  grafana:
-    image: grafana/grafana
-    container_name: grafana
-    ports:
-      - "3000:3000"
+networks:
+  backend-network:
+    driver: bridge
 
 volumes:
   kafka_data:

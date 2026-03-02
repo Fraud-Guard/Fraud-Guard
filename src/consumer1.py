@@ -5,16 +5,22 @@ import json
 import pymysql
 import math
 import time
+from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from pathlib import Path
 
-# 환경 변수 설정 (docker-compose와 연동)
+# 환경 변수
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR.parent / "Docker" / ".env"
+if ENV_PATH.exists():
+    load_dotenv(dotenv_path=ENV_PATH)
+
 KAFKA_BOOTSTRAP = os.getenv('KAFKA_BOOTSTRAP', 'kafka:9092')
-KAFKA_TOPIC = '2nd-topic'
-MYSQL_HOST = 'mysql'
-MYSQL_USER = 'root'
-MYSQL_PASSWORD = os.getenv('MYSQL_ROOT_PASSWORD', 'root')
-MYSQL_DB = 'fraud_guard'
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC_PROCESSED", "2nd-topic")
+MYSQL_HOST = os.getenv("MYSQL_HOST", "mysql")
+MYSQL_USER = os.getenv("MYSQL_APP_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+MYSQL_DB = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
 def get_db_connection():
     max_retries = 10
@@ -26,7 +32,10 @@ def get_db_connection():
                 password=MYSQL_PASSWORD,
                 db=MYSQL_DB,
                 charset='utf8mb4',
-                cursorclass=pymysql.cursors.DictCursor
+                cursorclass=pymysql.cursors.DictCursor,
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
             print("✅ DB 연결 성공!")
             return conn
@@ -36,6 +45,24 @@ def get_db_connection():
             time.sleep(5)  # 5초 쉬고 다시 시도
 
     raise Exception("❌ DB 연결 시도 횟수 초과!")
+
+def mask_value(value, visible_len=2):
+    """
+    민감 정보를 마스킹합니다.
+    예: 1234567 -> ******67
+    """
+    if value is None:
+        return "None"
+    
+    s_val = str(value)
+    length = len(s_val)
+    
+    # 길이가 1글자면 별도처리
+    if length == 1:
+        return "******0" + s_val
+    
+    # 뒤쪽 visible_len 만큼만 보여줌
+    return "******" + s_val[-visible_len:]
 
 def main():
     # 1. 카프카 컨슈머 설정
@@ -47,7 +74,7 @@ def main():
         value_deserializer=lambda x: json.loads(x.decode('utf-8'))# JSON 역직렬화 설정
     )
 
-    print(f"📥 {KAFKA_TOPIC} 모니터링 시작 및 DB 적재 대기 중...")
+    print(f"📥 kafka 모니터링 시작 및 DB 적재 대기 중...")
 
     while True:  # 👈 추가: 프로그램이 종료되지 않게 무한 루프
         conn = None
@@ -55,26 +82,7 @@ def main():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            # 1. Transactions Table (최종 적재용)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS transactions_data (
-                    id INT PRIMARY KEY,
-                    order_id INT,
-                    order_time DATETIME(3),
-                    client_id INT,
-                    card_id INT,
-                    merchant_id INT,
-                    amount DECIMAL(10, 2),
-                    error VARCHAR(100),
-                    is_valid BOOLEAN,
-                    is_fraud BOOLEAN,
-                    is_severe_fraud BOOLEAN,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (client_id) REFERENCES users_data(id),
-                    FOREIGN KEY (card_id) REFERENCES cards_data(id),
-                    FOREIGN KEY (merchant_id) REFERENCES merchants_data(id)
-                )
-            """)
+            
             # 2. 메시지 소비 및 적재 루프
             for message in consumer:
                 data = message.value
@@ -107,7 +115,7 @@ def main():
                 cursor.execute(sql, val)
                 conn.commit()
                 
-                print(f"✅ [DB 저장 완료] ID: {data['id']} | Time: {data['order_time']}")
+                print(f"✅ [DB 저장 완료] ID: {mask_value(data['id'])} | Time: {data['order_time']}")
 
         except Exception as e:
             print(f"❌ 에러 발생: {e}")

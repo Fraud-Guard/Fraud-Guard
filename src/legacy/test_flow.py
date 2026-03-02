@@ -1,3 +1,5 @@
+# 디버깅용 (실제 서비스에서 사용되지 않음)
+ 
 import pandas as pd
 import json
 import time

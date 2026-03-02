@@ -15,11 +15,18 @@ ENV_PATH = BASE_DIR.parent / "Docker" / ".env"
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
-DB_HOST = "mysql"
-DB_USER = "root"
-DB_PASSWORD = os.environ.get("MYSQL_ROOT_PASSWORD", "root")
-DB_NAME = os.environ.get("MYSQL_DATABASE", "fraud_guard")
+DB_HOST = os.getenv("MYSQL_HOST", "mysql")
+DB_USER = os.getenv("MYSQL_APP_USER", "app_user")
+DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", "MYSQL_ROOT_PASSWORD")
+ROOT_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD")
+DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 DATA_DIR = Path("/app/data/origin")
+
+print(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME)
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
 # ---------------------------------------------------------------------------
 # 1) Wait for DB
@@ -31,9 +38,12 @@ def wait_for_db():
         try:
             conn = pymysql.connect(
                 host=DB_HOST,
-                user=DB_USER,
-                password=DB_PASSWORD,
+                user="root",
+                password=ROOT_PASSWORD,
                 charset="utf8mb4",
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
             conn.close()
             print("✅ MySQL is ready to accept connections!")
@@ -51,11 +61,14 @@ def get_connection(with_db: bool = False):
     """with_db=True면 DB_NAME까지 선택된 커넥션 반환"""
     return pymysql.connect(
         host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        user="root",
+        password=ROOT_PASSWORD,
         db=DB_NAME if with_db else None,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=10,
+        read_timeout=30,
+        write_timeout=30
     )
 
 # ---------------------------------------------------------------------------
@@ -120,8 +133,47 @@ def create_database_and_tables():
                 )
             """)
 
+            # Transactions Table (최종 적재용)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS transactions_data (
+                    id INT PRIMARY KEY,
+                    order_id INT,
+                    order_time DATETIME(3),
+                    client_id INT,
+                    card_id INT,
+                    merchant_id INT,
+                    amount DECIMAL(10, 2),
+                    error VARCHAR(100),
+                    is_valid BOOLEAN,
+                    is_fraud BOOLEAN,
+                    is_severe_fraud BOOLEAN,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (client_id) REFERENCES users_data(id),
+                    FOREIGN KEY (card_id) REFERENCES cards_data(id),
+                    FOREIGN KEY (merchant_id) REFERENCES merchants_data(id)
+                )
+            """)
+
+            # [추가] App User 생성 및 권한 부여 로직 (이 부분을 추가하세요!)
+            print(f"[SECURITY] Creating App User: {DB_USER}...")
+            
+            # (1) 유저 생성 (없을 경우에만)
+            # '%'는 '모든 호스트(컨테이너)'에서의 접속을 허용한다는 뜻입니다.
+            cursor.execute(f"CREATE USER IF NOT EXISTS '{DB_USER}'@'%' IDENTIFIED BY '{DB_PASSWORD}';")
+            
+            # (2) 권한 부여
+            # Root 권한(GRANT OPTION 등)은 주지 않고, 
+            # fraud_guard DB에 대해서만 CRUD(Select, Insert, Update, Delete) 권한 부여
+            cursor.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {DB_NAME}.* TO '{DB_USER}'@'%';")
+            
+            # (3) 권한 적용
+            cursor.execute("FLUSH PRIVILEGES;")
+            
+            print(f"[SECURITY] ✅ App User '{DB_USER}' created and privileges granted.")
+
         conn.commit()
         print("[INIT] Master schema creation checked/completed.")
+
     finally:
         conn.close()
 
@@ -143,7 +195,7 @@ def clean_currency(value):
 # 5) Redis Connection (설정부 하단에 위치)
 # ---------------------------------------------------------------------------
 # decode_responses=True를 주어야 문자열로 다루기 편합니다.
-r = redis.StrictRedis(host='redis', port=6379, db=0, decode_responses=True)
+r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, password=REDIS_PASSWORD, decode_responses=True)
 
 # ... (wait_for_db, get_connection 함수 등) ...
 

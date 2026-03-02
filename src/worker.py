@@ -21,31 +21,55 @@ ENV_PATH = BASE_DIR.parent / 'Docker' / '.env'
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 
-KAFKA_BROKER = 'kafka:9092'
-SOURCE_TOPIC = 'raw-topic'
-TARGET_TOPIC = '2nd-topic'
-CONSUMER_GROUP = 'fraud-core-group'
+KAFKA_BROKER = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+SOURCE_TOPIC = os.getenv("KAFKA_TOPIC_RAW", "raw-topic")
+ERROR_TOPIC = os.getenv("KAFKA_TOPIC_ERROR", "err-topic")
+TARGET_TOPIC = os.getenv("KAFKA_TOPIC_PROCESSED", "2nd-topic")
+CONSUMER_GROUP = os.getenv("KAFKA_CONSUMER_GROUP_ID", "fraud-core-group")
 
-DB_HOST = 'mysql'
-DB_USER = 'root'
-DB_PASSWORD = os.environ.get('MYSQL_ROOT_PASSWORD', 'root')
-DB_NAME = os.environ.get('MYSQL_DATABASE', 'fraud_detection')
+DB_HOST = os.getenv("MYSQL_HOST", "mysql")
+DB_USER = os.getenv("MYSQL_APP_USER", "root")
+DB_PASSWORD = os.getenv("MYSQL_APP_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD"))
+DB_NAME = os.getenv("MYSQL_DATABASE", "fraud_guard")
 
-REDIS_HOST = 'redis'
-REDIS_PORT = 6379
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 
-MODEL_PATH_TIER1 = '/app/data/ML/tier1model.cbm'
-MODEL_PATH_TIER2 = '/app/data/ML/tier2model.cbm'
+MODEL_PATH_TIER1 = os.getenv("MODEL_PATH_TIER1", "/app/data/ML/tier1model.cbm")
+MODEL_PATH_TIER2 = os.getenv("MODEL_PATH_TIER2", "/app/data/ML/tier2model.cbm")
 
-TH_TIER1 = 0.99816559
-TH_TIER2 = 0.56802705
+# float 변환 주의!
+TH_TIER1 = float(os.getenv("MODEL_THRESHOLD_TIER1", 0.99816559))
+TH_TIER2 = float(os.getenv("MODEL_THRESHOLD_TIER2", 0.56802705))
+
+def mask_value(value, visible_len=2):
+    """
+    민감 정보를 마스킹합니다.
+    예: 1234567 -> ******67
+    """
+    if value is None:
+        return "None"
+    
+    s_val = str(value)
+    length = len(s_val)
+    
+    # 길이가 1글자면 별도처리
+    if length == 1:
+        return "******0" + s_val
+    
+    # 뒤쪽 visible_len 만큼만 보여줌
+    return "******" + s_val[-visible_len:]
 
 # ---------------------------------------------------------------------------
 # 1. Feature Store (Redis + MySQL Handler)
 # ---------------------------------------------------------------------------
 class FeatureStore:
     def __init__(self):
-        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+        self.r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True,
+                                   socket_connect_timeout=5, # 연결 시도 5초 제한
+                                   socket_timeout=5          # 데이터 읽기/쓰기 5초 제한
+        )
         self.db_conn = None
 
     def get_db_connection(self):
@@ -53,7 +77,10 @@ class FeatureStore:
             self.db_conn = pymysql.connect(
                 host=DB_HOST, user=DB_USER, password=DB_PASSWORD, db=DB_NAME,
                 charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True
+                autocommit=True,
+                connect_timeout=10,  # 연결 시도 10초 지나면 에러
+                read_timeout=30,     # 쿼리 실행 후 30초 동안 응답 없으면 에러
+                write_timeout=30     # (선택) 데이터 전송 30초 제한
             )
         return self.db_conn
 
@@ -64,10 +91,19 @@ class FeatureStore:
             cursor.execute(f"SELECT * FROM {table} WHERE id = %s", (record_id,))
             return cursor.fetchone()
 
+    # [Safe Helper] 달러, 콤마 제거 및 안전한 float 변환
+    def clean_dollar(self, x):
+        if x is None: return 0.0
+        s = str(x).replace('$', '').replace(',', '')
+        try:
+            return float(s)
+        except:
+            return 0.0
+
     def get_static_features(self, user_id, card_id, merchant_id):
         features = {}
 
-        # 1. User Data (기존 로직 유지 - 매핑 문제 없으므로 그대로)
+        # 1. User Data (기존 로직 유지)
         user_key = f"info:user:{user_id}"
         user_data = self.r.get(user_key)
         
@@ -75,20 +111,22 @@ class FeatureStore:
             user_data_db = self._fetch_from_mysql("users_data", user_id)
             if user_data_db:
                 # [로그 추가] 캐시 미스 상황 알림
-                print(f"🔍 [Miss] User {user_id} not in Redis. Checking MySQL...")
-                # [수정 없음] 기존대로 진행
-                income = float(str(user_data_db.get('yearly_income', '0')).replace('$','').replace(',',''))
+                print(f"🔍 [Miss] User {mask_value(user_id)} not in Redis. Checking MySQL...")
+                
+                # [수정] clean_dollar 적용 및 int 명시
+                income = self.clean_dollar(user_data_db.get('yearly_income'))
                 user_info = {
                     'yearly_income': income,
-                    'current_age': user_data_db.get('current_age', 0),
-                    'credit_score': user_data_db.get('credit_score', 0)
+                    'current_age': int(user_data_db.get('current_age', 0)),
+                    'credit_score': int(user_data_db.get('credit_score', 0))
                 }
+                
                 # [로그 추가] 실시간 적재 성공 알림
-                print(f"✨ [Real-time Sync] User {user_id} features added to Redis.")
+                print(f"✨ [Real-time Sync] User {mask_value(user_id)} features added to Redis.")
                 self.r.set(user_key, json.dumps(user_info))
                 features.update(user_info)
             else:
-                print(f"❌ [FAIL] User {user_id} not found in DB.")
+                print(f"❌ [FAIL] User {mask_value(user_id)} not found in DB.")
                 return None
         else:
             features.update(json.loads(user_data))
@@ -98,80 +136,86 @@ class FeatureStore:
         card_data = self.r.get(card_key)
         
         if not card_data:
-            print(f"🔍 [Miss] Card {card_id} not in Redis. Checking MySQL...")
+            print(f"🔍 [Miss] Card {mask_value(card_id)} not in Redis. Checking MySQL...")
             card_data_db = self._fetch_from_mysql("cards_data", card_id)
             if card_data_db:
-                # [수정 없음] 기존대로 진행
-                limit = float(str(card_data_db.get('credit_limit', '0')).replace('$','').replace(',',''))
+                # [수정] clean_dollar 적용 및 int 명시
+                limit = self.clean_dollar(card_data_db.get('credit_limit'))
                 card_info = {
                     'credit_limit': limit,
                     'has_chip': card_data_db.get('has_chip', 'NO'),
-                    'year_pin_last_changed': card_data_db.get('year_pin_last_changed', 2020),
-                    'num_credit_cards': card_data_db.get('num_cards_issued', 1),
+                    'year_pin_last_changed': int(card_data_db.get('year_pin_last_changed', 2020)),
+                    'num_credit_cards': int(card_data_db.get('num_cards_issued', 1)),
                     'card_brand': card_data_db.get('card_brand', 'Unknown')
                 }
                 self.r.set(card_key, json.dumps(card_info))
-                print(f"✨ [Real-time Sync] Card {card_id} features added to Redis.")
+                print(f"✨ [Real-time Sync] Card {mask_value(card_id)} features added to Redis.")
                 features.update(card_info)
             else:
+                print(f"❌ [FAIL] Card {mask_value(card_id)} not found in DB.")
                 return None
         else:
             features.update(json.loads(card_data))
 
-        # 3. Merchant Data (🚨 여기가 Dirty Fix 핵심!)
+        # 3. Merchant Data (★ 핵심 수정: 포맷 통일)
         merch_key = f"merchant:{merchant_id}"
         merch_data = self.r.get(merch_key)
         
+        # Redis/DB 데이터 로드 로직
+        m_data = None
         if not merch_data:
             merch_data_db = self._fetch_from_mysql("merchants_data", merchant_id)
             if merch_data_db:
+                # Redis엔 원본 저장 (기존 로직 유지)
                 self.r.set(merch_key, json.dumps(merch_data_db, default=str))
-                
-                # [Dirty Fix 적용]
-                # DB에서 온 5411(int) -> 5411.0(float) -> "5411.0"(str) 강제 변환
-                # 모델이 학습한 "소수점 있는 문자열" 형태로 위장
-                try:
-                    mcc_val = str(float(merch_data_db.get('mcc', 0)))
-                except:
-                    mcc_val = "Unknown"
-                    
-                try:
-                    zip_val = str(float(merch_data_db.get('zip', 0)))
-                except:
-                    zip_val = "Unknown"
-
-                features['mcc'] = mcc_val
-                features['merchant_state'] = merch_data_db.get('merchant_state', 'Online')
-                features['zip'] = zip_val
+                m_data = merch_data_db
             else:
                 return None
         else:
-            m_json = json.loads(merch_data)
-            
-            # [Dirty Fix 적용] Redis에서 꺼낼 때도 동일하게 적용
-            try:
-                mcc_val = str(float(m_json.get('mcc', 0)))
-            except:
+            m_data = json.loads(merch_data)
+
+        # [Dirty Fix 수정 -> Training Format 일치화]
+        # MCC: Training is "5300" (Stringified Int) -> DB 5300.0/5300 -> "5300"
+        raw_mcc = m_data.get('mcc')
+        try:
+            if raw_mcc is None or str(raw_mcc).lower() == 'nan':
                 mcc_val = "Unknown"
-                
-            try:
-                zip_val = str(float(m_json.get('zip', 0)))
-            except:
-                zip_val = "Unknown"
-                
-            features['mcc'] = mcc_val
-            features['merchant_state'] = m_json.get('merchant_state', 'Online')
-            features['zip'] = zip_val
+            else:
+                # float -> int -> str (소수점 제거)
+                mcc_val = str(int(float(str(raw_mcc))))
+        except:
+            mcc_val = "Unknown"
+
+        # Zip: Training is "4105.0" (Stringified Float) -> DB 4105 -> "4105.0"
+        raw_zip = m_data.get('zip')
+        try:
+            if raw_zip is None or str(raw_zip).lower() == 'nan':
+                # [수정 3] "Unknown" -> "nan" (학습 데이터 일치화)
+                zip_val = "nan"
+            else:
+                zip_val = str(float(str(raw_zip)))
+        except:
+            zip_val = "nan" # 예외 발생 시에도 nan으로 처리
+            
+        # Merchant State
+        raw_state = m_data.get('merchant_state')
+        if raw_state is None or str(raw_state).lower() == 'nan':
+            state_val = "Online"
+        else:
+            state_val = str(raw_state)
+
+        features['mcc'] = mcc_val
+        features['merchant_state'] = state_val
+        features['zip'] = zip_val
 
         return features
 
     def calculate_velocity(self, client_id, amount, timestamp, card_id):
         """
         Redis ZSET을 이용한 실시간 Velocity 계산
-        [주의] client_id 기준으로 모든 카드의 거래를 통합 관리해야 함.
         """
         key = f"history:client:{client_id}"
-        member = f"{timestamp}:{amount}:{card_id}" # Unique Member (Timestamp 충돌 방지용 CardID 추가)
+        member = f"{timestamp}:{amount}:{card_id}" # Unique Member
         
         pipeline = self.r.pipeline()
         
@@ -182,7 +226,7 @@ class FeatureStore:
         cutoff_24h = timestamp - (24 * 3600)
         pipeline.zremrangebyscore(key, 0, cutoff_24h)
         
-        # 3. 24시간 카운트 조회 (현재 거래 포함)
+        # 3. 24시간 카운트 조회
         pipeline.zcard(key)
         
         # 4. 1시간 데이터 조회 (Sum 계산용)
@@ -197,32 +241,21 @@ class FeatureStore:
         # Sum 1h 계산
         sum_amt_1h = 0.0
         # Time Diff 계산을 위해 직전 거래 찾기
-        # (Redis ZSET은 Score(시간) 순 정렬되어 있음)
-        # 현재 거래(방금 넣은 것) 직전의 거래를 찾아야 함.
-        # ZREVRANGE로 가져오면 [현재, 직전, 전전 ...] 순서임.
         last_tx_ts = None
         
-        # 별도 조회: 직전 거래 시간 찾기 (Pipeline 밖에서 수행하거나 Pipeline에 추가 가능)
-        # 여기서는 정확성을 위해 ZREVRANGE 사용
+        # 별도 조회: 직전 거래 시간 찾기
         recent_txs = self.r.zrevrange(key, 0, 1, withscores=True)
-        # recent_txs[0]은 방금 넣은 현재 거래. recent_txs[1]이 직전 거래.
-        
         if len(recent_txs) > 1:
             last_tx_ts = recent_txs[1][1] # Score(timestamp)
-        else:
-            last_tx_ts = None # 직전 거래 없음 (첫 거래)
 
-        # Sum 계산
         for m in one_hour_txs:
             try:
                 parts = m.split(':')
-                # 포맷: timestamp:amount:card_id
                 amt = float(parts[1])
                 sum_amt_1h += amt
             except: pass
             
-        # [수정 2] Time Diff 계산 로직 (학습 데이터와 동일하게)
-        # 학습: fillna(999999) -> 첫 거래는 999999
+        # Time Diff 계산
         time_diff = 999999.0
         if last_tx_ts:
             time_diff = float(timestamp) - float(last_tx_ts)
@@ -248,16 +281,28 @@ class ModelHandler:
             'current_age', 'credit_score',
             'mcc', 'merchant_state', 'zip', 'use_chip', 'card_brand'
         ]
+        
+        # [수정] Int형으로 처리해야 할 컬럼 목록 정의
+        self.int_columns = [
+            'tech_mismatch', 'pin_years_gap', 'num_credit_cards', 
+            'hour', 'is_night', 'current_age', 'credit_score'
+        ]
 
     def predict(self, feature_dict):
         row = []
         for col in self.feature_order:
             val = feature_dict.get(col)
+            
+            # 1. 범주형 (String)
             if col in ['mcc', 'merchant_state', 'zip', 'use_chip', 'card_brand']:
                 row.append(str(val) if val is not None else "Unknown")
+            # 2. 정수형 (Int) - [수정] float으로 변환되는 것 방지
+            elif col in self.int_columns:
+                row.append(int(val) if val is not None else 0)
+            # 3. 실수형 (Float)
             else:
                 row.append(float(val) if val is not None else 0.0)
-        
+
         prob_t1 = self.tier1.predict_proba(row)[1]
         is_severe = 1 if prob_t1 >= TH_TIER1 else 0
         is_fraud = 0
@@ -276,7 +321,6 @@ def main():
     model_handler = ModelHandler()
     
     # [수정 2 관련] Kafka Consumer 설정 확인 필요
-    # 파티셔닝 전략은 Producer에서 설정해야 함.
     consumer = Consumer({
         'bootstrap.servers': KAFKA_BROKER,
         'group.id': CONSUMER_GROUP,
@@ -309,35 +353,36 @@ def main():
                     raw['client_id'], raw['card_id'], raw['merchant_id']
                 )
                 
-                # 무결성 검증 실패 시 (DB에도 없음)
+                # 무결성 검증 실패 시 (DB에도 없음) or Error Check
                 if (static_feats is None) or (raw['error'] != '-'):
                     raw['order_time'] = order_time
-                    raw['is_valid'] = 1
+                    raw['is_valid'] = 1 # 1 = Invalid (Team Convention)
                     raw['is_fraud'] = 0
                     raw['is_severe_fraud'] = 0
-                    # 바로 전송
                     producer.produce(TARGET_TOPIC, json.dumps(raw).encode('utf-8'))
                     continue
 
                 # 2. Dynamic Features
                 dt_obj = pd.to_datetime(raw['order_time'])
                 timestamp = dt_obj.timestamp()
-                amount = float(raw['amount'])
+                
+                # [수정 1] Amount 절대값 처리 (Critical Fix)
+                amount = abs(float(raw['amount']))
                 
                 # Velocity (Redis)
-                time_diff, count_24h, sum_1h = store.calculate_velocity(
+                time_diff, count_24h, sum_amt_1h = store.calculate_velocity(
                     raw['client_id'], amount, timestamp, raw['card_id']
                 )
                 
-                # [수정 3] 파생 변수 계산 (학습 코드와 100% 일치)
-                # Utilization Ratio (Limit 0이면 1로 치환했던 학습 코드 로직 적용)
-                # 학습: df['credit_limit'].replace(0, 1)
+                # [수정 2] 파생 변수 계산 & Type Casting
+                # Utilization Ratio
                 limit = static_feats['credit_limit']
-                if limit == 0: limit = 1.0
-                util_ratio = amount / limit
+                if limit == 0:
+                    util_ratio = float('inf') # 파이썬 infinity
+                else:
+                    util_ratio = amount / limit
                 
-                # Income Ratio (Income + 1 로 나눔)
-                # 학습: df['amount'] / (df['yearly_income'] + 1)
+                # Income Ratio
                 income = static_feats['yearly_income']
                 income_ratio = amount / (income + 1.0)
                 
@@ -347,46 +392,73 @@ def main():
                 tech_mismatch = 1 if (has_chip == 'YES' and use_chip == 'Swipe Transaction') else 0
                 
                 # PIN Gap
-                pin_gap = 2020 - static_feats['year_pin_last_changed']
+                pin_gap = 2019 - static_feats['year_pin_last_changed']
                 
+                # Feature Vector Construction (Type 명시 적용)
                 features = {
-                    'amount': amount,
-                    'utilization_ratio': util_ratio,
-                    'amount_income_ratio': income_ratio,
-                    'tech_mismatch': tech_mismatch,
-                    'pin_years_gap': pin_gap,
-                    'num_credit_cards': static_feats['num_credit_cards'],
-                    'hour': dt_obj.hour,
-                    'is_night': 1 if 0 <= dt_obj.hour < 6 else 0,
-                    'time_diff_seconds': time_diff,
-                    'count_24h': count_24h,
-                    'sum_amt_1h': sum_1h,
-                    'current_age': static_feats['current_age'],
-                    'credit_score': static_feats['credit_score'],
-                    'mcc': static_feats['mcc'],
-                    'merchant_state': static_feats['merchant_state'],
-                    'zip': static_feats['zip'],
-                    'use_chip': use_chip,
-                    'card_brand': static_feats['card_brand']
+                    'amount': float(amount),
+                    'utilization_ratio': float(util_ratio),
+                    'amount_income_ratio': float(income_ratio),
+                    'tech_mismatch': int(tech_mismatch),
+                    'pin_years_gap': int(pin_gap),
+                    'num_credit_cards': int(static_feats['num_credit_cards']),
+                    'hour': int(dt_obj.hour),
+                    'is_night': int(1 if 0 <= dt_obj.hour < 6 else 0),
+                    'time_diff_seconds': float(time_diff),
+                    'count_24h': float(count_24h),
+                    'sum_amt_1h': float(sum_amt_1h),
+                    'current_age': int(static_feats['current_age']),
+                    'credit_score': int(static_feats['credit_score']),
+                    'mcc': static_feats['mcc'], # String
+                    'merchant_state': static_feats['merchant_state'], # String
+                    'zip': static_feats['zip'], # String
+                    'use_chip': use_chip, # String
+                    'card_brand': static_feats['card_brand'], # String
+                    'client_id': raw['client_id'] # Debugging용
                 }
                 
                 # 3. Inference
                 is_severe, is_fraud = model_handler.predict(features)
                 raw['order_time'] = order_time
-                raw['is_valid'] = 0
+                raw['is_valid'] = 0 # 0 = Valid (Team Convention)
                 raw['is_fraud'] = is_fraud
                 raw['is_severe_fraud'] = is_severe
                 
                 producer.produce(TARGET_TOPIC, json.dumps(raw).encode('utf-8'))
                 
                 duration = (time.time() - start_time) * 1000
-                print(f"✅ [Processed] Client: {raw['client_id']} | Fraud: {is_fraud} | Latency: {duration:.4f}ms")
+                print(f"✅ [Processed] Client: {mask_value(raw['client_id'])} | Fraud: {is_fraud} | Latency: {duration:.4f}ms")
                 producer.poll(0)
 
             except Exception as e:
                 print(f"[ERROR] Processing Failed: {e}")
                 import traceback
                 traceback.print_exc()
+
+                # 에러 발생 시 err-topic으로 에러 메시지 수집
+                try:
+                    # 원본 메시지가 decoding이 안될 수도 있으므로 안전하게 처리
+                    raw_val = msg.value()
+                    decoded_val = "Unknown (Decode Failed)"
+                    if raw_val:
+                        try:
+                            decoded_val = raw_val.decode('utf-8')
+                        except:
+                            decoded_val = str(raw_val)
+
+                    error_data = {
+                        "error_message": str(e),
+                        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "original_data": decoded_val
+                    }
+                    
+                    # 에러 토픽으로 전송
+                    producer.produce(ERROR_TOPIC, json.dumps(error_data).encode('utf-8'))
+                    producer.poll(0)
+                    print(f"⚠️ [DLQ] Failed message sent to {ERROR_TOPIC}")
+                    
+                except Exception as dlq_error:
+                    print(f"🔥 [CRITICAL] Failed to send to DLQ: {dlq_error}")
 
     except KeyboardInterrupt:
         print("Worker stopping...")
