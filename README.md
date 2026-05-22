@@ -176,3 +176,17 @@ docker compose down -v
 ```bash
 docker exec -it mysql mysql -u root -p
 ```
+
+## 실행 화면
+
+![image1](docs/image1.png)
+![image2](docs/image2.png)
+![image3](docs/image3.png)
+![image4](docs/image4.png)
+![image5](docs/image5.png)
+![image7](docs/image7.png)
+![image8](docs/image8.png)
+
+## DataFlow
+
+![Dataflow](docs/DataFlow.png)
