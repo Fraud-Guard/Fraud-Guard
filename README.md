@@ -178,15 +178,22 @@ docker exec -it mysql mysql -u root -p
 ```
 
 ## 실행 화면
-
+MySQL 무결성 검증방식
 ![image1](docs/image1.png)
+레디스 도입후 무결성 검증방식 성과
 ![image2](docs/image2.png)
+Kafka message 전송 결과
 ![image3](docs/image3.png)
+Tableau state별 집계
 ![image4](docs/image4.png)
+Worker 로그 조회 터미널을 보니 삭제 된 데이터를<br>
+ mysql에서 조회->다시 레디스 캐시에 적재하는 모습
+
 ![image5](docs/image5.png)
+대규모 장애 상황을 대비한 k8s+KEDA 도입및 테스트(메시지 5000건 전송 이후 pods 5개로 증가)
 ![image7](docs/image7.png)
+대규모 장애 상황을 대비한 k8s+KEDA 도입및 테스트(메시지 5000건 전송 후 어느정도 시간 경과 pods 0으로 감소)
 ![image8](docs/image8.png)
 
 ## DataFlow
-
 ![Dataflow](docs/DataFlow.png)
